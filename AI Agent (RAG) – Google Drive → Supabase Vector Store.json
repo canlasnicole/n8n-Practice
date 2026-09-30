@@ -1,0 +1,391 @@
+{
+  "name": "AI Agent (RAG) – Google Drive → Supabase Vector Store",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## RAG Ingestion Pipeline\n**Google Drive → Gemini Embeddings → Supabase (pgvector)**\n\n1. Watches a Drive folder for **new + updated** files (polls every minute)\n2. Deletes old chunks of that file (no duplicates on re-upload)\n3. Downloads the file (Google Docs → plain text, Sheets → CSV)\n4. Splits into 1,000-char chunks (200 overlap)\n5. Embeds with Gemini and stores in `documents`\n\n**Before running:** set the folder ID in both triggers, attach credentials, run `supabase-setup.sql` once.",
+        "height": 340,
+        "width": 420,
+        "color": 5
+      },
+      "id": "c7860979-4cab-4252-8c79-478f767bec2c",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "https://drive.google.com/drive/folders/1p1NDAfX9EAv_7CR0Uq11c_gCfUlXfv2u",
+          "mode": "url"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "id": "d8cfa0a4-fad1-4183-ad33-bc6dc73fe8ea",
+      "name": "Drive Trigger – File Created",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        528,
+        272
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "pTcavf1wUOkn9IPE",
+          "name": "Google Drive account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "https://drive.google.com/drive/folders/1p1NDAfX9EAv_7CR0Uq11c_gCfUlXfv2u",
+          "mode": "url"
+        },
+        "event": "fileUpdated",
+        "options": {}
+      },
+      "id": "f03c06f1-df2c-498e-9fff-45c1b6c32523",
+      "name": "Drive Trigger – File Updated",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        528,
+        464
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "pTcavf1wUOkn9IPE",
+          "name": "Google Drive account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1",
+              "name": "fileId",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "f2",
+              "name": "fileName",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "f3",
+              "name": "mimeType",
+              "value": "={{ $json.mimeType }}",
+              "type": "string"
+            },
+            {
+              "id": "f4",
+              "name": "fileUrl",
+              "value": "={{ $json.webViewLink }}",
+              "type": "string"
+            },
+            {
+              "id": "f5",
+              "name": "modifiedTime",
+              "value": "={{ $json.modifiedTime }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "85fdfdd0-ea46-4987-92ea-c75279533f78",
+      "name": "Normalize File Info",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        768,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH deleted AS (\n  DELETE FROM documents\n  WHERE metadata->>'file_id' = $1\n  RETURNING 1\n)\nSELECT count(*) AS deleted_chunks FROM deleted;",
+        "options": {
+          "queryReplacement": "={{ $json.fileId }}"
+        }
+      },
+      "id": "c5898312-78ab-406c-bdae-d49a0d496038",
+      "name": "Delete Old Chunks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        992,
+        368
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "tHO6T7GeSwqgiiox",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Normalize File Info').item.json.fileId }}"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "text/plain"
+            }
+          }
+        }
+      },
+      "id": "e47a9566-9f9e-43c2-8a7c-d78ff4217420",
+      "name": "Download File",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1200,
+        368
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "Vm5PClpldYDC8CI4",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": {
+          "__rl": true,
+          "value": "documents",
+          "mode": "list",
+          "cachedResultName": "documents"
+        },
+        "options": {
+          "queryName": "match_documents"
+        }
+      },
+      "id": "7d973043-b2a5-4eab-9168-dad983be2d32",
+      "name": "Supabase Vector Store",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        368
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "FbnMXd06IJ8dgSTg",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "b6261582-04f0-404e-80cd-74a6d1aaf3d7",
+      "name": "Embeddings Google Gemini",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        608
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "sBJgzRvHeLy77nMQ",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "binary",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "file_id",
+                "value": "={{ $('Normalize File Info').item.json.fileId }}"
+              },
+              {
+                "name": "file_name",
+                "value": "={{ $('Normalize File Info').item.json.fileName }}"
+              },
+              {
+                "name": "mime_type",
+                "value": "={{ $('Normalize File Info').item.json.mimeType }}"
+              },
+              {
+                "name": "source_url",
+                "value": "={{ $('Normalize File Info').item.json.fileUrl }}"
+              },
+              {
+                "name": "modified_time",
+                "value": "={{ $('Normalize File Info').item.json.modifiedTime }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "50bcd178-0c33-41c0-9ad3-0e25bca81283",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        1584,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "chunkOverlap": 200,
+        "options": {}
+      },
+      "id": "cf9b7d65-548a-4c99-8c2d-87e02730c7ff",
+      "name": "Recursive Character Text Splitter",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        1664,
+        800
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Drive Trigger – File Created": {
+      "main": [
+        [
+          {
+            "node": "Normalize File Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive Trigger – File Updated": {
+      "main": [
+        [
+          {
+            "node": "Normalize File Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize File Info": {
+      "main": [
+        [
+          {
+            "node": "Delete Old Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Old Chunks": {
+      "main": [
+        [
+          {
+            "node": "Download File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download File": {
+      "main": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Google Gemini": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recursive Character Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "3a21fd1a-8e6c-47e9-aa2b-146bae254a11",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "06f7b26b4b064f1d72aa636caa8a7bd7087ae6b95b859135af2ee43167bb4d02"
+  },
+  "nodeGroups": [],
+  "id": "Lq3Uwt1DiHUSx8tM",
+  "tags": []
+}
